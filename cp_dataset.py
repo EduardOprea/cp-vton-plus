@@ -31,6 +31,10 @@ class CPDataset(data.Dataset):
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
+        self.transform_bw = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.5,), (0.5,))])
+
         # load data list
         im_names = []
         c_names = []
@@ -55,7 +59,9 @@ class CPDataset(data.Dataset):
         else:
             c = Image.open(osp.join(self.data_path, 'warp-cloth', im_name))    # c_name, if that is used when saved
             cm = Image.open(osp.join(self.data_path, 'warp-mask', im_name)).convert('L')    # c_name, if that is used when saved
-
+        
+        print("Garment read, size is ", c.size)
+        print("Garment mask read, size is ", cm.size)
         c = self.transform(c)  # [-1,1]
         cm_array = np.array(cm)
         cm_array = (cm_array >= 128).astype(np.float32)
@@ -64,6 +70,7 @@ class CPDataset(data.Dataset):
 
         # person image
         im = Image.open(osp.join(self.data_path, 'image', im_name))
+        print("Image read, size is ", im.size)
         im = self.transform(im)  # [-1,1]
 
         """
@@ -96,8 +103,8 @@ class CPDataset(data.Dataset):
         # load parsing image
         parse_name = im_name.replace('.jpg', '.png')
         im_parse = Image.open(
-            # osp.join(self.data_path, 'image-parse', parse_name)).convert('L')
-            osp.join(self.data_path, 'image-parse-new', parse_name)).convert('L')   # updated new segmentation
+            osp.join(self.data_path, 'image-parse', parse_name)).convert('L')
+            #osp.join(self.data_path, 'image-parse-new', parse_name)).convert('L')   # updated new segmentation
         parse_array = np.array(im_parse)
         im_mask = Image.open(
             osp.join(self.data_path, 'image-mask', parse_name)).convert('L')
@@ -108,10 +115,16 @@ class CPDataset(data.Dataset):
         parse_shape = (mask_array > 0).astype(np.float32)
 
         if self.stage == 'GMM':
-            parse_head = (parse_array == 1).astype(np.float32) + \
-                (parse_array == 4).astype(np.float32) + \
+            # EDY adapted for segmentation map of deep fashion multimodal
+            # 14 face and 13 hair
+            parse_head = (parse_array == 14).astype(np.float32) + \
                 (parse_array == 13).astype(
                     np.float32)  # CP-VTON+ GMM input (reserved regions)
+            
+            # parse_head = (parse_array == 1).astype(np.float32) + \
+            #     (parse_array == 4).astype(np.float32) + \
+            #     (parse_array == 13).astype(
+            #         np.float32)  # CP-VTON+ GMM input (reserved regions)
         else:
             parse_head = (parse_array == 1).astype(np.float32) + \
                 (parse_array == 2).astype(np.float32) + \
@@ -123,9 +136,15 @@ class CPDataset(data.Dataset):
                 (parse_array == 17).astype(
                 np.float32)  # CP-VTON+ TOM input (reserved regions)
 
-        parse_cloth = (parse_array == 5).astype(np.float32) + \
-            (parse_array == 6).astype(np.float32) + \
-            (parse_array == 7).astype(np.float32)    # upper-clothes labels
+        # EDY adapted for segmentation map of deep fashion multimodal
+        # 1 top 4 dress 21 rompers
+        parse_cloth = (parse_array == 1).astype(np.float32) + \
+            (parse_array == 4).astype(np.float32) + \
+            (parse_array == 21).astype(np.float32)    # upper-clothes labels
+        
+        # parse_cloth = (parse_array == 5).astype(np.float32) + \
+        #     (parse_array == 6).astype(np.float32) + \
+        #     (parse_array == 7).astype(np.float32)    # upper-clothes labels
 
         # shape downsample
         parse_shape_ori = Image.fromarray((parse_shape*255).astype(np.uint8))
@@ -135,8 +154,11 @@ class CPDataset(data.Dataset):
             (self.fine_width, self.fine_height), Image.BILINEAR)
         parse_shape_ori = parse_shape_ori.resize(
             (self.fine_width, self.fine_height), Image.BILINEAR)
-        shape_ori = self.transform(parse_shape_ori)  # [-1,1]
-        shape = self.transform(parse_shape)  # [-1,1]
+        print("Before transform parse shape ori")
+        shape_ori = self.transform_bw(parse_shape_ori)  # [-1,1]
+        print("Before transform parse shape")
+        shape = self.transform_bw(parse_shape)  # [-1,1]
+        print("After transform parse shape")
         phead = torch.from_numpy(parse_head)  # [0,1]
         # phand = torch.from_numpy(parse_hand)  # [0,1]
         pcm = torch.from_numpy(parse_cloth)  # [0,1]
@@ -168,18 +190,23 @@ class CPDataset(data.Dataset):
                                 r, pointy+r), 'white', 'white')
                 pose_draw.rectangle(
                     (pointx-r, pointy-r, pointx+r, pointy+r), 'white', 'white')
-            one_map = self.transform(one_map)
+            one_map = self.transform_bw(one_map)
+
             pose_map[i] = one_map[0]
 
         # just for visualization
-        im_pose = self.transform(im_pose)
+        print("before transforming im_pose")
+        im_pose = self.transform_bw(im_pose)
+        print("after transforming im_pose")
 
         # cloth-agnostic representation
         agnostic = torch.cat([shape, im_h, pose_map], 0)
 
         if self.stage == 'GMM':
             im_g = Image.open('grid.png')
+            print("Before transforming im_g")
             im_g = self.transform(im_g)
+            print("After transforming im_g")
         else:
             im_g = ''
 
